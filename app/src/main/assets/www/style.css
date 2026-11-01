@@ -605,6 +605,11 @@ img {
     transition: transform .26s var(--ease), box-shadow .26s var(--ease), border-color .26s;
     animation: cIn .42s var(--ease) both;
     position: relative;
+    /* will-change 제거: 카드마다 별도 GPU 레이어가 생겨(검색/홈/즐겨찾기 합쳐 수백 개) 메모리·합성 비용이 누적되고
+       스크롤이 무거워졌다. 박자 효과(.beat-active)는 꺼져 있고, 켜질 때만 아래 규칙으로 승격한다. */
+}
+
+.card.beat-active {
     will-change: transform, box-shadow;
 }
 
@@ -5305,6 +5310,7 @@ button, a, div, span, input {
 html.glass-native #mob-nav,
 html.glass-native #bar,
 html.glass-native #pl-ctx-menu,
+html.glass-native #pl-edit-menu,
 html.glass-native #pl-dialog,
 html.glass-native #pl-confirm,
 html.glass-native #pl-add-modal {
