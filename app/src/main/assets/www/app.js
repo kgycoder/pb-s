@@ -89,10 +89,11 @@ function bgLoop() {
         if (o.y < -o.r) o.y = BG_H + o.r; if (o.y > BG_H + o.r) o.y = -o.r;
     });
 
-    // 실제 그리기는 2프레임에 1번(30fps). 매 프레임 전체 화면을 다시 그리면 WebView 합성과
+    // 실제 그리기는 4프레임에 1번(15fps, 일시정지 시 ~7fps) — 오브 이동이 프레임당 1px 미만이라 구분되지 않는다.
+    // (이전: 2프레임에 1번(30fps). 매 프레임 전체 화면을 다시 그리면 WebView 합성과
     // 네이티브 글래스(배경 캡처·블러)까지 60fps 로 다시 계산되어 시간이 지날수록 부하/발열이 커진다.
     // 일시정지 중에는 오브 이동이 프레임당 1px 미만이고 위에 blur(120px) 오버레이가 덮여 있어 10fps 로도 구분이 안 된다.
-    if (BG.f % (BG.playing ? 2 : 6)) return;
+    if (BG.f % (BG.playing ? 4 : 8)) return;
     if (performance.now() - window.__lastScrollAt < 160) return;   // 스크롤 중엔 그리기 생략
     // 전체화면 플레이어(#np, 불투명)가 덮고 있는 동안엔 보이지 않으므로 그리지 않는다.
     if (_npIsOpen()) return;
@@ -662,7 +663,12 @@ let _beatCount = 0;
    초당 20번 모두 건드리면 스타일 재계산·페인트가 폭증한다. */
 const _visCards = new Set();
 let _cardIO = null;
+/* 박자 효과(BG.beat)가 항상 0 이라 "보이는 카드" 추적은 쓰이지 않는다. 그런데 카드를 만들 때마다 IntersectionObserver 에 등록하고
+   _visCards(Set)에 담았고, _beatCards() 가 호출되지 않으니 DOM 에서 떨어져 나간 카드(와 이미지)가 정리되지 않고 계속 쌓였다.
+   → 검색/홈/즐겨찾기를 렌더링할수록 메모리·GC 부하가 늘어 시간이 지날수록 프레임이 떨어졌다. 박자 효과를 다시 켤 때만 true 로. */
+const BEAT_CARD_FX = false;
 function _observeCard(c) {
+    if (!BEAT_CARD_FX) return;
     if (!('IntersectionObserver' in window)) return;
     if (!_cardIO) {
         _cardIO = new IntersectionObserver(es => {
@@ -680,6 +686,7 @@ function _beatCards() {
 
 let _npMeshTick = 0;
 let _lastNpGlow = '', _lastNpCol = '', _npIdleTick = 0, _beatDirty = false, _vbList = null;
+let _lastVbCol = '', _vbWasBeat = false;
 function updateNpColor() {
     _moodH += (_tMoodH - _moodH) * .04;
     const h = Math.round(_moodH), s = _moodS, l = _moodL;
@@ -735,13 +742,18 @@ function updateNpColor() {
 
     if (S.playing) {
         if (!_vbList || !_vbList.length) _vbList = document.querySelectorAll('.vb');
-        _vbList.forEach((b, i) => {
-            b.style.background = `hsl(${h},${s}%,62%)`;
-            if (beat > .06) {
-                const ht = 1 + beat * en * (0.8 + Math.sin(i * 1.4 + BG.f * .08) * 0.5);
-                b.style.transform = `scaleY(${ht.toFixed(3)})`;
-            } else b.style.transform = '';
-        });
+        const vbCol = `hsl(${h},${s}%,62%)`, vbBeat = beat > .06;
+        // 색/박자가 그대로면 막대 스타일을 매 50ms 마다 다시 쓰지 않는다 (재생 내내 20Hz 로 스타일 무효화되던 부분)
+        if (vbBeat || _vbWasBeat || vbCol !== _lastVbCol) {
+            _lastVbCol = vbCol; _vbWasBeat = vbBeat;
+            _vbList.forEach((b, i) => {
+                b.style.background = vbCol;
+                if (vbBeat) {
+                    const ht = 1 + beat * en * (0.8 + Math.sin(i * 1.4 + BG.f * .08) * 0.5);
+                    b.style.transform = `scaleY(${ht.toFixed(3)})`;
+                } else b.style.transform = '';
+            });
+        }
     }
 
     if (S.playing && beat > .04) {
@@ -1149,12 +1161,13 @@ async function doSearch(query) {
         // 유튜브가 돌려준 결과는 그대로 보존하고(강력한 검색 유지),
         // 음악/뮤직비디오로 보이는 항목이 앞에 오도록 순서만 재정렬한다.
         S.q = sortMusicFirst(res.tracks || []);
+        const results = S.q;   // 클릭 시점에 S.q 가 홈/플레이리스트 목록으로 바뀌어 있어도 이 결과 목록 기준으로 재생한다
         if (!S.q.length) { area.innerHTML = `<div class="state"><h3>결과 없음</h3><p>다른 검색어를 시도해보세요</p></div>`; return; }
         area.innerHTML = `<div class="sh"><h2>검색 결과 <span style="font-size:12px;font-weight:400;color:var(--t3)">${S.q.length}개</span></h2></div>
       <div class="cgrid" id="sg"></div>`;
         const sg = document.getElementById('sg');
         S.q.forEach((t, i) => {
-            const card = mkCard(t, i, () => { S.idx = i; playTrack(t, i); });
+            const card = mkCard(t, i, () => { S.q = results; S.idx = i; playTrack(t, i); });
             sg.appendChild(card);
         });
         renderQueue();
@@ -1668,6 +1681,29 @@ function playTrackYt(t, idx = -1) {
     fetchLyrics(t.id);
 }
 
+/* ── 현재 재생 곡 하이라이트 (카드 · 플레이리스트 행 · 대기열) ─────────────────────────────
+   예전에는 카드만 곡이 바뀔 때 갱신하고, 플레이리스트 행은 "렌더링한 순간"에만 판정했고(곡이 바뀌어도 그대로 → 이전 곡이
+   강조됨), 대기열은 S.idx 만 믿었다(S.q 가 다른 목록으로 교체되면 어긋남). 이제 전부 S.track.id 를 기준으로 판정하고,
+   대기열은 S.idx 가 S.q 와 일치할 때만 인덱스를 쓰고 아니면 id 로 다시 찾는다. */
+function syncPlayingHighlight() {
+    const id = S.track?.id || null;
+    document.querySelectorAll('.card').forEach(c => {
+        const playing = !!id && c.dataset.id === id;
+        c.classList.toggle('playing', playing);
+        const nb = c.querySelector('.c-now-bar');
+        if (playing && !nb) {
+            const th = c.querySelector('.c-thumb'); if (th) {
+                const d = document.createElement('div'); d.className = 'c-now-bar';
+                d.innerHTML = '<span></span><span></span><span></span>'; th.appendChild(d);
+            }
+        } else if (!playing && nb) nb.remove();
+    });
+    document.querySelectorAll('#pl-track-list .pl-track').forEach(r => {
+        r.classList.toggle('playing', !!id && r.dataset.id === id);
+    });
+    renderQueue();
+}
+
 function applyTrackUi(t) {
     updateBarVisibility();
     const localThumb = trackThumbSrc(t);
@@ -1687,23 +1723,13 @@ function applyTrackUi(t) {
     npArt.onerror = () => { npArt.src = md; npArt.onerror = () => { npArt.src = t.thumb || getThumbSd(t.id); }; };
     document.getElementById('np-title').textContent = t.title;
     document.getElementById('np-ch').textContent = t.channel || 'YouTube';
-    document.querySelectorAll('.card').forEach(c => {
-        const playing = c.dataset.id === t.id;
-        c.classList.toggle('playing', playing);
-        const nb = c.querySelector('.c-now-bar');
-        if (playing && !nb) {
-            const th = c.querySelector('.c-thumb'); if (th) {
-                const d = document.createElement('div'); d.className = 'c-now-bar';
-                d.innerHTML = '<span></span><span></span><span></span>'; th.appendChild(d);
-            }
-        } else if (!playing && nb) nb.remove();
-    });
+    syncPlayingHighlight();   // 카드 / 플레이리스트 행 / 대기열을 한 곳에서 같은 기준(현재 곡 id)으로 갱신
     detectMood(t.title);
     extractThumbColors(hq, md, t.title);
     trackRecentPlay(t);
     post('setTitle', { title: t.title });
     syncMediaSession();
-    renderQueue(); openNP();
+    openNP();
     const tag = hasLocalFile(t) ? '📥 ' : '';
     toast(`${tag}▶  ${t.title.length > 40 ? t.title.slice(0, 40) + '…' : t.title}`);
     if (OV.active) {
@@ -2486,13 +2512,41 @@ function playFav(i) { S.q = [...S.favs]; S.idx = i; playTrack(S.favs[i], i); }
 /* ════════════════════════════════════════════
    QUEUE
 ════════════════════════════════════════════ */
+/* 현재 곡의 대기열 인덱스: S.idx 가 S.q 와 맞을 때만 신뢰하고, 아니면 id 로 찾는다(없으면 -1 → 강조 없음). */
+function _curQueueIdx() {
+    const id = S.track?.id;
+    if (!id || !S.q.length) return -1;
+    if (S.q[S.idx]?.id === id) return S.idx;
+    return S.q.findIndex(t => t.id === id);
+}
+const _Q_NOW_ICO = `<svg class="lcard-now" width="13" height="13" viewBox="0 0 13 13" fill="var(--acc)"><polygon points="3,2 11,6.5 3,11"/></svg>`;
+let _qSig = '';
 function renderQueue() {
     const wrap = document.getElementById('q-list');
+    if (!wrap) return;
     if (!S.q.length) {
+        _qSig = '';
         wrap.innerHTML = `<div class="state"><svg width="44" height="44" viewBox="0 0 44 44" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M6 11h32M6 22h22M6 33h28"/></svg><h3>대기열 없음</h3></div>`; return;
     }
+    const cur = _curQueueIdx();
+    const sig = S.q.map(t => t.id).join('|');
+    /* 목록(곡 구성/순서)이 그대로면 전체를 다시 그리지 않고 강조만 옮긴다 — 곡이 바뀔 때마다 수십~수백 행과 이미지를
+       다시 만들던 비용 제거 (프레임 드랍/발열 원인 중 하나) */
+    if (sig === _qSig && wrap.childElementCount === S.q.length) {
+        const rows = wrap.children;
+        for (let i = 0; i < rows.length; i++) {
+            const on = i === cur, r = rows[i];
+            if (r.classList.contains('playing') === on) continue;
+            r.classList.toggle('playing', on);
+            const ico = r.querySelector('.lcard-now');
+            if (on && !ico) r.insertAdjacentHTML('beforeend', _Q_NOW_ICO);
+            else if (!on && ico) ico.remove();
+        }
+        return;
+    }
+    _qSig = sig;
     wrap.innerHTML = S.q.map((t, i) => `
-    <div class="lcard${i === S.idx ? ' playing' : ''}" onclick="playIdx(${i})">
+    <div class="lcard${i === cur ? ' playing' : ''}" onclick="playIdx(${i})">
       <span class="lcard-n">${i + 1}</span>
       <img class="lcard-art" src="${esc(getThumbMd(t.id))}" onerror="this.src='${esc(t.thumb)}'" alt="">
       <div class="lcard-m">
@@ -2500,7 +2554,7 @@ function renderQueue() {
         <div class="lcard-c">${esc(t.channel)}</div>
       </div>
       <span class="lcard-d">${fmt(t.dur)}</span>
-      ${i === S.idx ? `<svg width="13" height="13" viewBox="0 0 13 13" fill="var(--acc)"><polygon points="3,2 11,6.5 3,11"/></svg>` : ''}
+      ${i === cur ? _Q_NOW_ICO : ''}
     </div>`).join('');
 }
 
@@ -2508,6 +2562,7 @@ function renderQueue() {
    VIEWS / ROUTING
 ════════════════════════════════════════════ */
 function gv(v, el) {
+    if (typeof plEditExit === 'function') plEditExit();   // 플레이리스트 편집 상태는 화면을 떠나면 해제
     document.querySelectorAll('.view').forEach(e => e.classList.remove('on'));
     document.getElementById('v-' + v)?.classList.add('on');
     document.querySelectorAll('.nb').forEach(e => e.classList.remove('on'));
@@ -2673,6 +2728,7 @@ function plRenderGrid() {
 function plRenderDetail(plId) {
     const pl = plById(plId); if (!pl) return;
     PL.curId = plId;
+    if (typeof plEditExit === 'function') plEditExit(true);   // 다시 그리면 편집 중이던 행이 사라지므로 먼저 정리
     document.getElementById('pl-list-view').style.display = 'none';
     document.getElementById('pl-detail-view').style.display = '';
     document.getElementById('pl-detail-name').textContent = pl.name;
@@ -2696,6 +2752,7 @@ function plRenderDetail(plId) {
     pl.tracks.forEach((t, i) => {
         const row = document.createElement('div');
         row.className = 'pl-track' + (S.track?.id === t.id ? ' playing' : '');
+        row.dataset.id = t.id;
         row.innerHTML = `
       <span class="pl-track-num">${i + 1}</span>
       <img class="pl-track-art" src="${esc(trackThumbSrc(t))}" onerror="this.src='${esc(t.thumb || getThumbMd(t.id))}'" alt="">
@@ -2704,17 +2761,24 @@ function plRenderDetail(plId) {
         <div class="pl-track-c">${esc(t.channel)}</div>
       </div>
       <span class="pl-track-dur">${fmt(t.dur)}</span>
+      <span class="pl-track-grip" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h10M2 7h10M2 10h10"/></svg></span>
       <button class="pl-track-del" onclick="event.stopPropagation();plRemoveTrack('${esc(plId)}','${esc(t.id)}')" title="제거">
         <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <line x1="1.5" y1="1.5" x2="9.5" y2="9.5"/><line x1="9.5" y1="1.5" x2="1.5" y2="9.5"/>
         </svg>
       </button>`;
-        row.addEventListener('click', () => { S.q = [...pl.tracks]; S.idx = i; playTrack(t, i); });
+        // 편집 모드에서 순서가 바뀌어도 맞도록, 렌더 시점의 i 가 아니라 클릭 시점의 위치를 사용한다
+        row.addEventListener('click', () => {
+            const idx = pl.tracks.findIndex(x => x.id === t.id);
+            if (idx < 0) return;
+            S.q = [...pl.tracks]; S.idx = idx; playTrack(pl.tracks[idx], idx);
+        });
         list.appendChild(row);
     });
 }
 
 function plShowList() {
+    if (typeof plEditExit === 'function') plEditExit(true);
     PL.curId = null;
     document.getElementById('pl-list-view').style.display = '';
     document.getElementById('pl-detail-view').style.display = 'none';
@@ -3938,6 +4002,7 @@ window.__onAndroidBack = function() {
     if (document.getElementById('pl-dialog-overlay')?.classList.contains('on')) { plDialogCancel(); return; }
     if (document.getElementById('pl-confirm-overlay')?.classList.contains('on')) { plConfirmCancel(); return; }
     if (document.getElementById('pl-add-modal-overlay')?.classList.contains('on')) { plAddModalClose(); return; }
+    if (typeof plEditActive === 'function' && plEditActive()) { plEditExit(); return; }   // 플레이리스트 편집 상태 해제
 };
 
 // 화면 회전 감지 — NP_LS가 active 중이면 무시
