@@ -18,6 +18,10 @@ data class CssRect(val x: Float, val y: Float, val w: Float, val h: Float)
     val playing: Boolean, val fav: Boolean, val accent: Long, val progress: Float
 )
 @Immutable data class CtxState(val rect: CssRect, val title: String, val items: List<String>, val newLabel: String)
+
+/** 플레이리스트 곡 edit 상태 Context Menu (곡 즐겨찾기 / 곡 삭제). [on] = 즐겨찾기 상태, [danger] = 삭제 항목. */
+@Immutable data class EditMenuItem(val label: String, val on: Boolean, val danger: Boolean)
+@Immutable data class EditMenuState(val rect: CssRect, val items: List<EditMenuItem>)
 @Immutable data class DialogState(
     val rect: CssRect, val title: String, val value: String, val placeholder: String,
     val focused: Boolean, val okLabel: String, val cancelLabel: String
@@ -41,6 +45,7 @@ data class GlassState(
     val search: SearchState? = null,
     val bar: BarState? = null,
     val ctx: CtxState? = null,
+    val edm: EditMenuState? = null,
     val dialog: DialogState? = null,
     val confirm: ConfirmState? = null,
     val add: AddModalState? = null
@@ -62,6 +67,15 @@ data class GlassState(
                 },
                 ctx = o.optJSONObject("ctx")?.let {
                     CtxState(rect(it), it.optString("title"), strings(it.optJSONArray("items")), it.optString("new"))
+                },
+                edm = o.optJSONObject("edm")?.let { m ->
+                    val arr = m.optJSONArray("items")
+                    EditMenuState(rect(m), buildList {
+                        if (arr != null) for (i in 0 until arr.length()) {
+                            val r = arr.getJSONObject(i)
+                            add(EditMenuItem(r.optString("t"), r.optBoolean("on"), r.optBoolean("d")))
+                        }
+                    })
                 },
                 dialog = o.optJSONObject("dlg")?.let {
                     DialogState(rect(it), it.optString("title"), it.optString("value"), it.optString("ph"),
