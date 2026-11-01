@@ -1,0 +1,114 @@
+/* ════════════════════════════════════════════════════════════════════
+   PLAYLIST EDIT MODE — 곡 행 edit 상태 / 드래그 정렬 / Context Menu
+   (playlist-edit.js 와 짝. 기존 디자인 변수(--glass, --acc, --ease ...)를 그대로 사용한다.)
+════════════════════════════════════════════════════════════════════ */
+
+/* 행: 길게 눌렀을 때 텍스트 선택/시스템 메뉴가 뜨지 않도록 */
+#pl-track-list .pl-track {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    transition: background .12s, opacity .22s ease, box-shadow .22s ease, border-color .22s ease,
+                transform .26s cubic-bezier(.22, 1, .36, 1);
+}
+
+#pl-track-list .pl-track img {
+    -webkit-user-drag: none;
+    pointer-events: none;
+}
+
+/* 순서 변경 핸들: edit 상태의 행에서만 보인다 */
+.pl-track-grip {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    color: var(--t3);
+}
+
+/* edit 상태: 행이 살짝 떠오르고 나머지는 잠시 물러난다 */
+#pl-track-list.pl-editing .pl-track:not(.editing):not(.dragging) {
+    opacity: .5;
+}
+
+#pl-track-list .pl-track.editing {
+    position: relative;
+    z-index: 3;
+    touch-action: none;          /* edit 행에서 시작한 제스처는 스크롤이 아니라 드래그 */
+    transform: scale(1.02);
+    background: rgba(255, 255, 255, .10);
+    border-color: rgba(255, 255, 255, .22);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .16);
+}
+
+#pl-track-list .pl-track.editing.playing {
+    border-color: rgba(250, 45, 90, .45);
+}
+
+#pl-track-list .pl-track.editing .pl-track-grip { display: flex; }
+#pl-track-list .pl-track.editing .pl-track-dur,
+#pl-track-list .pl-track.editing .pl-track-del { display: none; }
+
+/* 드래그 중: 손가락을 따라가므로 transition 없음, 가장 위에 그린다 */
+#pl-track-list .pl-track.dragging {
+    transition: none !important;
+    will-change: transform;
+    z-index: 4;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .20);
+}
+#pl-track-list .pl-track.settling { z-index: 4; }
+
+/* ── Context Menu (브라우저 단독 실행 시 폴백) ─────────────────────────────────────────
+   앱에서는 html.glass-native 가 이 요소를 투명 처리하고, 같은 위치/내용으로 네이티브 Kyant Liquid Glass 가 그린다.
+   크기는 네이티브 EditMenuGlass 와 동일하게 고정(196 × 108). */
+#pl-edit-menu {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 500;
+    width: 196px;
+    box-sizing: border-box;
+    padding: 8px 0;
+    display: none;
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .04));
+    border: 1px solid rgba(255, 255, 255, .20);
+    -webkit-backdrop-filter: blur(34px) saturate(2.1);
+    backdrop-filter: blur(34px) saturate(2.1);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), 0 14px 34px rgba(0, 0, 0, .40);
+}
+
+#pl-edit-menu.on {
+    display: block;
+    animation: plEdmIn .28s cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes plEdmIn {
+    from { opacity: 0; transform: scale(.9); }
+    to   { opacity: 1; transform: none; }
+}
+
+.pl-edm-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    height: 46px;
+    padding: 0 20px;
+    box-sizing: border-box;
+    background: transparent;
+    border: 0;
+    color: #fff;
+    font-size: 15px;
+    text-align: left;
+    cursor: pointer;
+    transition: background .12s var(--ease);
+}
+
+.pl-edm-item:active { background: rgba(255, 255, 255, .10); }
+.pl-edm-item svg { flex-shrink: 0; }
+.pl-edm-item.on { color: var(--acc); }
+.pl-edm-item.on svg path { fill: var(--acc); }
+.pl-edm-item.danger { color: #ff453a; }
