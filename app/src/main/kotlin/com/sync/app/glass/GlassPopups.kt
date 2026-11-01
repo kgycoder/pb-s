@@ -196,6 +196,51 @@ internal fun ContextMenuGlass(m: CtxState, backdrop: Backdrop, c: GlassControlle
     }
 }
 
+/**
+ * 플레이리스트 곡 edit 상태 Context Menu. 기존 ContextMenuGlass 와 같은 Kyant `dialogGlass`(blur + lens + highlight)를 쓰고,
+ * DOM(#pl-edit-menu)이 알려 준 위치/크기(196 × 108)에 그대로 올린다. 탭은 glass-bridge.js 의 'edm' 명령으로 전달된다.
+ */
+@Composable
+internal fun EditMenuGlass(m: EditMenuState, backdrop: Backdrop, c: GlassController) {
+    val pop = rememberPopIn()
+    Box(Modifier.cssRect(m.rect)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .dialogGlass(backdrop, 24, pop.value, 16f, 32f)
+                .then(NoTouchThrough)
+                .padding(vertical = 8.dp)
+        ) {
+            m.items.forEachIndexed { i, item ->
+                EditMenuRow(item) { c.cmd { put("t", "edm"); put("i", i) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditMenuRow(item: EditMenuItem, onClick: () -> Unit) {
+    val color = when {
+        item.danger -> GlassTheme.Danger
+        item.on -> LocalGlassAccent.current
+        else -> GlassTheme.Content
+    }
+    Row(
+        Modifier.fillMaxWidth().height(46.dp).tap(onClick = onClick).padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Canvas(Modifier.size(16.dp)) {
+            when {
+                item.danger -> strokeIcon(GlassIcons.Close, 12f, color, 1.6f)
+                item.on -> fillIcon(GlassIcons.Heart, 15f, color)
+                else -> strokeIcon(listOf(GlassIcons.Heart), 15f, color, 1.4f)
+            }
+        }
+        BasicText(item.label, style = TextStyle(color, 15.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 private fun MenuRow(label: String, color: Color, onClick: () -> Unit) {
     BasicText(
