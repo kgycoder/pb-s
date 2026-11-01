@@ -1,0 +1,130 @@
+package com.sync.app.glass
+
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import org.json.JSONObject
+
+/**
+ * Frontend(WebView) <-> Native(Compose) channel.
+ *
+ *  JS  -> Kotlin : window.GlassBridge.push(json)   (DOM state mirror, rects in CSS px)
+ *  Kotlin -> JS  : window.__glassCmd({...})        (taps / text input forwarded to the existing app.js functions)
+ *
+ * The WebView + app.js + AndroidBridge keep running exactly as before; they remain the single source of
+ * truth for playback / search / playlists. Compose only renders the glass surfaces and their controls.
+ */
+class GlassController(private val webView: WebView) {
+
+    var state by mutableStateOf(GlassState())
+        private set
+
+    /**
+     * WebView.getScrollY() (px) at the last onScrollChange. This is only the *invalidation signal*:
+     * reading it inside a layout/draw block makes that block run again when the page scrolls.
+     * The value that is actually used for positioning is read live from the WebView (see [cssScroll]).
+     */
+    var nativeScrollPx by mutableIntStateOf(0)
+        private set
+
+    /** Bumped once a scroll has settled, so every layout/draw block that reads [cssScroll] runs once more and
+     *  re-reads the final offset (a rapid burst of scroll/reflow could otherwise leave the last frame's
+     *  invalidation behind, which showed up as a capsule that stayed misaligned until the next scroll). */
+    var settleTick by mutableIntStateOf(0)
+        private set
+
+    /** CSS px. Non-zero only if the page (JS) reported a settled scroll offset that differs from WebView.getScrollY(). */
+    private var settleBias = 0f
+    private var lastNativeY = 0
+    private val settle = Runnable { settleTick++ }
+
+    /**
+     * true  = 아래로 스크롤 중 → 하단 도크가 "미니 플레이어 + 홈 / 검색 캡슐" 로 합쳐진 상태.
+     * false = 평상시(탭 캡슐 + 검색 캡슐, 미니 플레이어는 그 위). 위로 스크롤하면 원래대로 돌아온다.
+     * 방향 판정은 WebView.getScrollY() 변화량만 사용한다(JS 왕복 없음, 임계값으로 떨림 방지).
+     */
+    var collapsed by mutableStateOf(false)
+        private set
+    private var dirLastY = 0
+    private var dirAcc = 0f
+
+    fun expand() { dirAcc = 0f; if (collapsed) collapsed = false }
+
+    private fun trackDirection(y: Int) {
+        val d = webView.resources.displayMetrics.density
+        val dy = y - dirLastY
+        dirLastY = y
+        if (y <= 8f * d) { dirAcc = 0f; if (collapsed) collapsed = false; return }
+        if (dy == 0) return
+        if ((dy > 0) != (dirAcc > 0f)) dirAcc = 0f          // 방향이 바뀌면 누적 초기화
+        dirAcc += dy
+        if (!collapsed && dirAcc > 28f * d) collapsed = true
+        else if (collapsed && dirAcc < -14f * d) collapsed = false
+    }
+
+    fun onNativeScroll(y: Int) {
+        trackDirection(y)
+        if (y != lastNativeY) { lastNativeY = y; settleBias = 0f }   // new scroll → drop any stale correction
+        nativeScrollPx = y
+        main.removeCallbacks(settle)
+        main.postDelayed(settle, 120)
+        main.postDelayed(settle, 400)
+    }
+
+    /**
+     * Called once by glass-bridge.js ~150ms after the last scroll event (one call per scroll gesture, not per event).
+     * [y] is window.scrollY (CSS px) = ground truth of what the page is showing. If WebView.getScrollY() disagrees,
+     * the glass follows the page, not the stale Java value.
+     */
+    @JavascriptInterface
+    fun settled(y: Float) {
+        main.post {
+            val d = webView.resources.displayMetrics.density
+            val diff = y - webView.scrollY / d
+            settleBias = if (kotlin.math.abs(diff) > 1f) diff else 0f
+            settleTick++
+        }
+    }
+
+    /** Kept for backward compatibility with older bridge scripts. Per-scroll-event JS→Java calls are synchronous
+     *  IPC that stall the renderer's main thread (= scroll jank), so glass-bridge.js no longer calls this. */
+    @JavascriptInterface
+    fun scroll(y: Float) { /* no-op */ }
+
+    /**
+     * Current document scroll in CSS px (== dp).
+     *
+     * Subscribes to [nativeScrollPx] / [settleTick] (so callers re-run on scroll and once more after it settles) but
+     * returns WebView.getScrollY() *at call time*.
+     * WebView syncs its scroll offset inside its own onDraw; a draw block that runs after the WebView was drawn
+     * (glass is a later sibling) therefore sees the offset of the frame that is being produced right now,
+     * instead of the previous frame's value that a state snapshot would give.
+     */
+    fun cssScroll(density: Float): Float {
+        @Suppress("UNUSED_VARIABLE") val a = nativeScrollPx
+        @Suppress("UNUSED_VARIABLE") val b = settleTick
+        return webView.scrollY / density + settleBias
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+    private var lastJson = ""
+
+    @JavascriptInterface
+    fun push(json: String) {
+        if (json == lastJson) return
+        lastJson = json
+        // parse on the JS bridge thread; only the already-built immutable state hops to the UI thread
+        val parsed = try { GlassState.parse(json) } catch (_: Exception) { return }
+        main.post { state = parsed }
+    }
+
+    fun cmd(build: JSONObject.() -> Unit) {
+        val js = JSONObject().apply(build).toString()
+        webView.post { webView.evaluateJavascript("window.__glassCmd&&window.__glassCmd($js)", null) }
+    }
+}
