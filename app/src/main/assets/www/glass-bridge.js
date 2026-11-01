@@ -142,6 +142,20 @@
             };
         }
 
+        /* 플레이리스트 곡 edit 상태 Context Menu (곡 즐겨찾기 / 곡 삭제) */
+        const edm = $('pl-edit-menu');
+        if (edm && edm.classList.contains('on')) {
+            const er = edm.getBoundingClientRect();   // position:fixed + 애니메이션 없음(글래스 모드) → 뷰포트 좌표 그대로
+            const fav = $('pl-edm-fav');
+            st.edm = {
+                r: { x: er.left, y: er.top, w: edm.offsetWidth, h: edm.offsetHeight },
+                items: [
+                    { t: txt($('pl-edm-fav-t')), on: !!(fav && fav.classList.contains('on')) },
+                    { t: txt($('pl-edm-del-t')), d: true }
+                ]
+            };
+        }
+
         /* 이름 입력 다이얼로그 */
         if ($('pl-dialog-overlay') && $('pl-dialog-overlay').classList.contains('on')) {
             const d = $('pl-dialog'), inp = $('pl-dialog-input');
@@ -202,7 +216,7 @@
     }
 
     /* 레이아웃/상태에 실제 영향이 있는 변화만 반응 (재생 진행/가사 하이라이트 등은 무시 → 메인 스레드 부하 0) */
-    const OVERLAYS = '#pl-ctx-menu,#pl-dialog-overlay,#pl-confirm-overlay,#pl-add-modal-overlay';
+    const OVERLAYS = '#pl-ctx-menu,#pl-edit-menu,#pl-dialog-overlay,#pl-confirm-overlay,#pl-add-modal-overlay';
     const HOSTS = '#mob-nav,#bar,.mob-srch-wrap';
     const mo = new MutationObserver(recs => {
         let burst = false, once = false;
@@ -227,7 +241,7 @@
         subtree: true, childList: true, characterData: true,
         attributes: true, attributeFilter: ['class', 'src', 'placeholder']
     });
-    ['#pl-ctx-menu', '#pl-dialog-overlay', '#pl-confirm-overlay', '#pl-add-modal-overlay'].forEach(sel => {
+    ['#pl-ctx-menu', '#pl-edit-menu', '#pl-dialog-overlay', '#pl-confirm-overlay', '#pl-add-modal-overlay'].forEach(sel => {
         const el = document.querySelector(sel);
         if (el) mo.observe(el, { subtree: true, attributes: true, attributeFilter: ['style'] });
     });
@@ -313,6 +327,11 @@
                         const items = document.querySelectorAll('#pl-ctx-list .pl-ctx-item');
                         if (items[c.i]) items[c.i].click();
                     }
+                    break;
+                }
+                case 'edm': {   // 네이티브 Context Menu 탭 → DOM 버튼과 동일한 동작
+                    if (c.i === 0 && window.plEditFav) window.plEditFav();
+                    else if (c.i === 1 && window.plEditDelete) window.plEditDelete();
                     break;
                 }
                 case 'dlg': if (c.a === 'ok') plDialogConfirm(); else plDialogCancel(); break;
